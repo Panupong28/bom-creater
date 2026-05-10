@@ -12,8 +12,45 @@ from google.genai import types as genai_types
 
 KNOWLEDGE_FILE = "knowledge_base.json"
 PART_INDEX_FILE = "part_index.json"
+TOKEN_USAGE_FILE = "token_usage.json"
 CHROMA_DIR = "chroma_db"
 OMRON_PN = re.compile(r'\b([A-Z]{1,4}\d*[A-Z]*-[A-Z0-9\-]{2,15})\b')
+
+# ── Token tracking ───────────────────────────────────────────────────────────
+
+def load_token_usage() -> dict:
+    if os.path.exists(TOKEN_USAGE_FILE):
+        with open(TOKEN_USAGE_FILE, "r") as f:
+            return json.load(f)
+    return {"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}}
+
+def save_token_usage(usage: dict):
+    with open(TOKEN_USAGE_FILE, "w") as f:
+        json.dump(usage, f, indent=2)
+
+def track_tokens(response, function_name: str):
+    """อ่าน usage_metadata จาก response แล้ว save"""
+    try:
+        meta = response.usage_metadata
+        in_tok = meta.prompt_token_count or 0
+        out_tok = meta.candidates_token_count or 0
+    except Exception:
+        return
+    usage = load_token_usage()
+    usage["total_input"] += in_tok
+    usage["total_output"] += out_tok
+    usage["total_calls"] += 1
+    fn = usage["by_function"].setdefault(function_name, {"input": 0, "output": 0, "calls": 0})
+    fn["input"] += in_tok
+    fn["output"] += out_tok
+    fn["calls"] += 1
+    save_token_usage(usage)
+    # session counter
+    if "session_tokens" not in st.session_state:
+        st.session_state.session_tokens = {"input": 0, "output": 0, "calls": 0}
+    st.session_state.session_tokens["input"] += in_tok
+    st.session_state.session_tokens["output"] += out_tok
+    st.session_state.session_tokens["calls"] += 1
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -85,6 +122,7 @@ def llm_extract_structured(chunk: str) -> dict:
             response_mime_type="application/json",
         ),
     )
+    track_tokens(response, "extract_pdf")
     try:
         text = response.text.strip()
         m = re.search(r'\{.*\}', text, re.DOTALL)
@@ -154,7 +192,7 @@ def search_catalog(collection, query: str, n: int = 5) -> list[str]:
     results = collection.query(query_texts=[query], n_results=min(n, collection.count()))
     return results["documents"][0] if results["documents"] else []
 
-def ask_llm(system_prompt: str, user_input: str) -> str:
+def ask_llm(system_prompt: str, user_input: str, fn_name: str = "ask_llm") -> str:
     client = get_gemini_client()
     response = client.models.generate_content(
         model=GEMINI_MODEL,
@@ -164,6 +202,7 @@ def ask_llm(system_prompt: str, user_input: str) -> str:
             temperature=0.1,
         ),
     )
+    track_tokens(response, fn_name)
     return response.text
 
 def get_component_queries(user_input: str) -> list[str]:
@@ -180,6 +219,7 @@ def get_component_queries(user_input: str) -> list[str]:
             response_mime_type="application/json",
         ),
     )
+    track_tokens(response, "component_query")
     text = response.text.strip()
     match = re.search(r'\[.*?\]', text, re.DOTALL)
     if match:
@@ -275,6 +315,40 @@ def build_bom_prompt(kb, part_index: dict, queries: list[str] = None, collection
 
 st.set_page_config(page_title="BOM + OMRON Catalog", layout="wide")
 st.title("BOM Generator + OMRON Catalog")
+
+# ── Sidebar: Token Usage ─────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("📊 Token Usage")
+    usage = load_token_usage()
+    sess = st.session_state.get("session_tokens", {"input": 0, "output": 0, "calls": 0})
+
+    st.subheader("Session นี้")
+    c1, c2 = st.columns(2)
+    c1.metric("Input", f"{sess['input']:,}")
+    c2.metric("Output", f"{sess['output']:,}")
+    st.caption(f"จำนวน call: {sess['calls']}")
+
+    st.subheader("รวมทั้งหมด")
+    c3, c4 = st.columns(2)
+    c3.metric("Input", f"{usage['total_input']:,}")
+    c4.metric("Output", f"{usage['total_output']:,}")
+    total_all = usage['total_input'] + usage['total_output']
+    st.caption(f"รวม: {total_all:,} tokens · {usage['total_calls']} calls")
+
+    # โควต้า Gemini Free 250k tokens/min, 250 requests/วัน (Flash)
+    if usage["by_function"]:
+        with st.expander("แยกตามฟังก์ชัน"):
+            for fn, v in sorted(usage["by_function"].items(), key=lambda x: -(x[1]["input"]+x[1]["output"])):
+                tot = v["input"] + v["output"]
+                st.write(f"**{fn}**: {tot:,} ({v['calls']} calls)")
+
+    if st.button("🔄 รีเซ็ตยอดทั้งหมด"):
+        save_token_usage({"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}})
+        st.session_state.session_tokens = {"input": 0, "output": 0, "calls": 0}
+        st.rerun()
+
+    st.markdown("---")
+    st.caption("💰 Gemini 2.5 Flash ฟรี 250 calls/วัน")
 
 kb = load_knowledge()
 collection = get_chroma_collection()
