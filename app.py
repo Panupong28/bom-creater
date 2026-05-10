@@ -7,7 +7,8 @@ import hashlib
 import pdfplumber
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-import anthropic
+from google import genai
+from google.genai import types as genai_types
 
 KNOWLEDGE_FILE = "knowledge_base.json"
 PART_INDEX_FILE = "part_index.json"
@@ -49,22 +50,22 @@ def extract_parts_from_text(text: str, source: str) -> dict:
     return parts
 
 @st.cache_resource
-def get_anthropic_client():
-    # รองรับทั้ง Streamlit secrets (local/Cloud) และ environment variable (HF Spaces / Codespaces)
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+def get_gemini_client():
+    # รองรับทั้ง Streamlit secrets และ environment variable (HF Spaces)
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         try:
-            api_key = st.secrets["ANTHROPIC_API_KEY"]
+            api_key = st.secrets["GEMINI_API_KEY"]
         except Exception:
-            st.error("⚠️ ไม่พบ ANTHROPIC_API_KEY กรุณาตั้งค่าใน Settings → Variables and secrets")
+            st.error("⚠️ ไม่พบ GEMINI_API_KEY กรุณาตั้งค่าใน Settings → Variables and secrets")
             st.stop()
-    return anthropic.Anthropic(api_key=api_key)
+    return genai.Client(api_key=api_key)
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 def llm_extract_structured(chunk: str) -> dict:
-    """ใช้ Claude อ่าน chunk แล้วสกัดเป็น structured JSON"""
-    client = get_anthropic_client()
+    """ใช้ Gemini อ่าน chunk แล้วสกัดเป็น structured JSON"""
+    client = get_gemini_client()
     system = """คุณเป็น engineer วิเคราะห์ catalog OMRON สกัด Part No. ที่ปรากฏในข้อความ พร้อมข้อมูล:
 - category: หมวด (เช่น "CPU Unit", "Power Supply", "Digital Input", "Digital Output", "Analog I/O", "Communication", "Cable", "Terminal Block", "Connector")
 - description: คำอธิบายสั้นๆ
@@ -75,14 +76,17 @@ def llm_extract_structured(chunk: str) -> dict:
 {"PART-NO-1": {"category":"...","description":"...","key_specs":"...","use_when":"..."}}
 
 ถ้าไม่มี Part No. ใน text ให้ตอบ {}"""
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=2000,
-        system=system,
-        messages=[{"role": "user", "content": chunk[:2000]}],
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=chunk[:2000],
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.0,
+            response_mime_type="application/json",
+        ),
     )
     try:
-        text = response.content[0].text.strip()
+        text = response.text.strip()
         m = re.search(r'\{.*\}', text, re.DOTALL)
         return json.loads(m.group()) if m else {}
     except Exception:
@@ -151,27 +155,32 @@ def search_catalog(collection, query: str, n: int = 5) -> list[str]:
     return results["documents"][0] if results["documents"] else []
 
 def ask_llm(system_prompt: str, user_input: str) -> str:
-    client = get_anthropic_client()
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=4000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_input}],
+    client = get_gemini_client()
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user_input,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.1,
+        ),
     )
-    return response.content[0].text
+    return response.text
 
 def get_component_queries(user_input: str) -> list[str]:
     """ให้ LLM แยก component แล้วสร้าง search query ทีละตัว"""
-    client = get_anthropic_client()
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=500,
-        system="""แยก component ที่ต้องการจาก input แล้วสร้าง search query ภาษาอังกฤษสำหรับค้นหาใน OMRON catalog
+    client = get_gemini_client()
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user_input,
+        config=genai_types.GenerateContentConfig(
+            system_instruction="""แยก component ที่ต้องการจาก input แล้วสร้าง search query ภาษาอังกฤษสำหรับค้นหาใน OMRON catalog
 ตอบเป็น JSON array ของ string เท่านั้น ไม่ต้องมีคำอธิบาย
 ตัวอย่าง: ["CJ2M CPU unit", "power supply CJ1W", "digital input module 64 point FCN connector", "digital output module 64 point FCN connector"]""",
-        messages=[{"role": "user", "content": user_input}],
+            temperature=0.0,
+            response_mime_type="application/json",
+        ),
     )
-    text = response.content[0].text.strip()
+    text = response.text.strip()
     match = re.search(r'\[.*?\]', text, re.DOTALL)
     if match:
         try:
