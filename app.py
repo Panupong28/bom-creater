@@ -602,13 +602,20 @@ with tab_catalog:
 with tab_db:
     st.subheader("ฐานข้อมูล Catalog")
 
-    if collection.count() == 0:
-        st.warning("ยังไม่มีข้อมูล กรุณาอัปโหลด Catalog ก่อน")
+    struct_index = load_part_index()
+    has_chroma = collection.count() > 0
+    has_struct = bool(struct_index)
+
+    if not has_chroma and not has_struct:
+        st.warning("ยังไม่มีข้อมูล — อัปโหลด PDF ที่ tab Catalog หรือ Import JSON")
     else:
-        # ดึงข้อมูลทั้งหมดจาก ChromaDB
-        all_data = collection.get(include=["documents", "metadatas"])
-        all_docs = all_data["documents"]
-        all_metas = all_data["metadatas"]
+        # ดึงข้อมูลทั้งหมดจาก ChromaDB (ถ้ามี)
+        if has_chroma:
+            all_data = collection.get(include=["documents", "metadatas"])
+            all_docs = all_data["documents"]
+            all_metas = all_data["metadatas"]
+        else:
+            all_docs, all_metas = [], []
 
         # สกัด Part No. ทั้งหมด (OMRON pattern เช่น CJ2M-CPU34, CJ1W-ID211)
         omron_pattern = re.compile(r'\b[A-Z]{1,4}\d*[A-Z]*-[A-Z0-9]{2,10}\b')
@@ -619,18 +626,18 @@ with tab_db:
                 if pn not in part_numbers:
                     part_numbers[pn] = {"source": src, "context": doc[:200]}
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Chunks ทั้งหมด", collection.count())
-        col2.metric("Part No. ที่พบ", len(part_numbers))
-        col3.metric("ไฟล์ที่อัปโหลด", len(set(m["source"] for m in all_metas)))
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Chunks ChromaDB", collection.count())
+        col2.metric("Part No. (regex)", len(part_numbers))
+        col3.metric("Part No. (structured)", len(struct_index))
+        sources = set(m["source"] for m in all_metas) | set(v.get("source","") for v in struct_index.values() if v.get("source"))
+        col4.metric("ไฟล์ทั้งหมด", len(sources))
 
         st.markdown("---")
 
         # ค้นหา Part No.
         search_pn = st.text_input("ค้นหา Part No. หรือคำที่ต้องการ", placeholder="เช่น: CJ1W, output, power supply")
 
-        # โหลด structured part_index ถ้ามี
-        struct_index = load_part_index()
         has_structured = any("category" in v for v in struct_index.values()) if struct_index else False
 
         if has_structured:
