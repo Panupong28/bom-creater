@@ -1,0 +1,5 @@
+streamlit
+anthropic
+chromadb
+pdfplumber
+sentence-transformers
