@@ -427,7 +427,16 @@ with tab_catalog:
 
         st.markdown("4. Copy JSON ที่ได้ → save เป็นไฟล์ `.json` → upload ที่นี่:")
 
-        json_file = st.file_uploader("อัปโหลด JSON", type=["json"], key="json_import")
+        st.markdown("**ทาง 1: Upload ไฟล์ .json**")
+        json_file = st.file_uploader("อัปโหลด JSON", type=["json", "txt"], key="json_import")
+
+        st.markdown("**ทาง 2: Paste JSON ตรงๆ (สะดวกกว่า)**")
+        json_text = st.text_area(
+            "วาง JSON ที่ copy จาก AI",
+            placeholder='{"CJ2M-CPU34": {"category": "CPU Unit", ...}}',
+            height=150,
+            key="json_paste",
+        )
 
         merge_mode = st.radio(
             "วิธี import",
@@ -435,23 +444,59 @@ with tab_catalog:
             horizontal=True,
         )
 
-        if json_file and st.button("📥 Import JSON", type="primary"):
+        if st.button("📥 Import JSON", type="primary", use_container_width=True):
+            raw_text = ""
+            if json_file:
+                raw_text = json_file.read().decode("utf-8")
+                st.info(f"อ่านจากไฟล์: {json_file.name} ({len(raw_text):,} ตัวอักษร)")
+            elif json_text.strip():
+                raw_text = json_text.strip()
+                st.info(f"อ่านจาก textarea ({len(raw_text):,} ตัวอักษร)")
+            else:
+                st.warning("กรุณาเลือกไฟล์หรือวาง JSON ก่อน")
+                st.stop()
+
+            # ลอกพวก markdown code block ออก ```json ... ```
+            cleaned = re.sub(r'^```(?:json)?\s*', '', raw_text.strip())
+            cleaned = re.sub(r'\s*```\s*$', '', cleaned)
+            # ดึง JSON object ที่ใหญ่สุดออกมา (กันมีคำอธิบายปนหน้าหรือหลัง)
+            m = re.search(r'\{[\s\S]*\}', cleaned)
+            if m:
+                cleaned = m.group()
+
             try:
-                new_data = json.loads(json_file.read().decode("utf-8"))
-                if not isinstance(new_data, dict):
-                    st.error("รูปแบบ JSON ไม่ถูกต้อง — ต้องเป็น dict {PART-NO: {...}}")
-                else:
-                    if merge_mode == "แทนที่ทั้งหมด (replace)":
-                        save_part_index(new_data)
-                        st.success(f"✅ Replace แล้ว — Part No. ทั้งหมด {len(new_data)} รายการ")
-                    else:
-                        existing = load_part_index()
-                        existing.update(new_data)
-                        save_part_index(existing)
-                        st.success(f"✅ Merge แล้ว — เพิ่ม/อัปเดต {len(new_data)} รายการ (รวม {len(existing)})")
-                    st.rerun()
+                new_data = json.loads(cleaned)
             except json.JSONDecodeError as e:
-                st.error(f"JSON ผิด format: {e}")
+                st.error(f"❌ JSON ผิด format: {e}")
+                with st.expander("ดูข้อความที่พยายาม parse"):
+                    st.code(cleaned[:1000])
+                st.stop()
+
+            if not isinstance(new_data, dict):
+                st.error(f"❌ ต้องเป็น dict {{PART-NO: {{...}}}} แต่ได้ {type(new_data).__name__}")
+                st.stop()
+
+            # ตรวจ format
+            valid_count = sum(1 for v in new_data.values() if isinstance(v, dict))
+            if valid_count == 0:
+                st.error("❌ ไม่มี Part No. ที่มีโครงสร้างถูกต้อง")
+                st.stop()
+
+            if merge_mode == "แทนที่ทั้งหมด (replace)":
+                save_part_index(new_data)
+                st.success(f"✅ Replace แล้ว — Part No. ทั้งหมด {len(new_data)} รายการ")
+            else:
+                existing = load_part_index()
+                before = len(existing)
+                existing.update(new_data)
+                save_part_index(existing)
+                st.success(f"✅ Merge แล้ว — เพิ่ม/อัปเดต {len(new_data)} รายการ (รวม {len(existing)}, เดิม {before})")
+
+            with st.expander(f"ตัวอย่าง Part No. ที่ import ({min(5, len(new_data))} รายการแรก)"):
+                for pn, info in list(new_data.items())[:5]:
+                    st.write(f"**{pn}**: {info}")
+
+            st.balloons()
 
     st.markdown("---")
 
