@@ -396,6 +396,65 @@ with tab_bom:
 
 # ── Tab 2: Catalog ────────────────────────────────────────────────────────────
 with tab_catalog:
+    # ── Section: Import JSON จาก AI Chat ภายนอก ──────────────────────────────
+    with st.expander("⚡ Import จาก AI Chat ภายนอก (ประหยัด token)", expanded=False):
+        st.markdown("""
+**วิธีใช้ — ทำใน Gemini / Claude / ChatGPT (ฟรี ไม่จำกัด)**
+
+1. ไปที่ [gemini.google.com](https://gemini.google.com) หรือ [claude.ai](https://claude.ai) หรือ [chatgpt.com](https://chatgpt.com)
+2. **Upload PDF catalog** เข้าแชท
+3. Copy prompt ด้านล่างไป paste แล้วส่ง:
+""")
+        prompt_template = """อ่าน PDF นี้แล้วสกัด Part No. ของ OMRON ทั้งหมดออกมา
+สำหรับแต่ละ Part No. ให้บอก:
+- category: หมวด เช่น "CPU Unit", "Power Supply", "Digital Input", "Digital Output", "Analog I/O", "Communication", "Cable", "Terminal Block", "Connector"
+- description: คำอธิบายสั้นๆ
+- key_specs: spec สำคัญ (เช่น "64 points, 24VDC, FCN connector")
+- use_when: เมื่อไหร่ควรใช้ (1 ประโยคสั้น)
+
+ตอบเป็น JSON เท่านั้น ไม่มีคำอธิบาย format นี้:
+{
+  "PART-NO-1": {
+    "category": "...",
+    "description": "...",
+    "key_specs": "...",
+    "use_when": "...",
+    "source": "ชื่อไฟล์ PDF"
+  },
+  "PART-NO-2": {...}
+}"""
+        st.code(prompt_template, language="text")
+
+        st.markdown("4. Copy JSON ที่ได้ → save เป็นไฟล์ `.json` → upload ที่นี่:")
+
+        json_file = st.file_uploader("อัปโหลด JSON", type=["json"], key="json_import")
+
+        merge_mode = st.radio(
+            "วิธี import",
+            ["รวมกับของเดิม (merge)", "แทนที่ทั้งหมด (replace)"],
+            horizontal=True,
+        )
+
+        if json_file and st.button("📥 Import JSON", type="primary"):
+            try:
+                new_data = json.loads(json_file.read().decode("utf-8"))
+                if not isinstance(new_data, dict):
+                    st.error("รูปแบบ JSON ไม่ถูกต้อง — ต้องเป็น dict {PART-NO: {...}}")
+                else:
+                    if merge_mode == "แทนที่ทั้งหมด (replace)":
+                        save_part_index(new_data)
+                        st.success(f"✅ Replace แล้ว — Part No. ทั้งหมด {len(new_data)} รายการ")
+                    else:
+                        existing = load_part_index()
+                        existing.update(new_data)
+                        save_part_index(existing)
+                        st.success(f"✅ Merge แล้ว — เพิ่ม/อัปเดต {len(new_data)} รายการ (รวม {len(existing)})")
+                    st.rerun()
+            except json.JSONDecodeError as e:
+                st.error(f"JSON ผิด format: {e}")
+
+    st.markdown("---")
+
     col_upload, col_query = st.columns([1, 1])
 
     with col_upload:
