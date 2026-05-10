@@ -50,7 +50,15 @@ def extract_parts_from_text(text: str, source: str) -> dict:
 
 @st.cache_resource
 def get_anthropic_client():
-    return anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+    # รองรับทั้ง Streamlit secrets (local/Cloud) และ environment variable (HF Spaces / Codespaces)
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets["ANTHROPIC_API_KEY"]
+        except Exception:
+            st.error("⚠️ ไม่พบ ANTHROPIC_API_KEY กรุณาตั้งค่าใน Settings → Variables and secrets")
+            st.stop()
+    return anthropic.Anthropic(api_key=api_key)
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
