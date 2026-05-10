@@ -482,21 +482,30 @@ with tab_catalog:
                 st.error("❌ ไม่มี Part No. ที่มีโครงสร้างถูกต้อง")
                 st.stop()
 
-            if merge_mode == "แทนที่ทั้งหมด (replace)":
-                save_part_index(new_data)
-                st.success(f"✅ Replace แล้ว — Part No. ทั้งหมด {len(new_data)} รายการ")
-            else:
-                existing = load_part_index()
-                before = len(existing)
-                existing.update(new_data)
-                save_part_index(existing)
-                st.success(f"✅ Merge แล้ว — เพิ่ม/อัปเดต {len(new_data)} รายการ (รวม {len(existing)}, เดิม {before})")
+            try:
+                if merge_mode == "แทนที่ทั้งหมด (replace)":
+                    save_part_index(new_data)
+                    final = new_data
+                else:
+                    existing = load_part_index()
+                    existing.update(new_data)
+                    save_part_index(existing)
+                    final = existing
 
-            with st.expander(f"ตัวอย่าง Part No. ที่ import ({min(5, len(new_data))} รายการแรก)"):
-                for pn, info in list(new_data.items())[:5]:
-                    st.write(f"**{pn}**: {info}")
+                # ตรวจสอบว่าบันทึกจริง
+                check = load_part_index()
+                st.success(f"✅ บันทึกสำเร็จ — ฐานข้อมูลมี {len(check)} Part No. (เพิ่ม/อัปเดต {len(new_data)} รายการ)")
+                st.info(f"📁 บันทึกที่: {os.path.abspath(PART_INDEX_FILE)}")
 
-            st.balloons()
+                with st.expander(f"ตัวอย่าง Part No. ที่ import (5 รายการแรก)"):
+                    for pn, info in list(new_data.items())[:5]:
+                        st.write(f"**{pn}** → {info.get('category','?')}: {info.get('description','')}")
+
+                st.balloons()
+                st.session_state["just_imported"] = True
+            except Exception as e:
+                st.error(f"❌ บันทึกไม่ได้: {e}")
+                st.exception(e)
 
     st.markdown("---")
 
