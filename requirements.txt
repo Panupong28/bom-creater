@@ -3,3 +3,5 @@ anthropic
 chromadb
 pdfplumber
 sentence-transformers
+torch
+torchvision
