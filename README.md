@@ -1,12 +1,12 @@
 ---
-title: BOM Generator OMRON Catalog
+title: Bom Creater
 emoji: 🏭
 colorFrom: blue
 colorTo: green
-sdk: streamlit
-sdk_version: 1.57.0
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
+license: mit
 ---
 
 # BOM Generator + OMRON Catalog
@@ -20,6 +20,6 @@ pinned: false
 - ทีมสอน LLM ผ่าน rules และ examples ได้
 
 ## การใช้งาน
-1. ตั้งค่า `ANTHROPIC_API_KEY` ใน Settings → Secrets
+1. ตั้งค่า `ANTHROPIC_API_KEY` ใน Settings → Variables and secrets
 2. อัปโหลด PDF catalog ที่ tab "Catalog OMRON"
 3. สร้าง BOM ที่ tab "สร้าง BOM"
