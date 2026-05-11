@@ -106,7 +106,7 @@ def get_gemini_client():
             st.stop()
     return genai.Client(api_key=api_key)
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash-lite"  # Free 1000 RPD vs Flash 20 RPD
 
 def llm_extract_structured(chunk: str) -> dict:
     """ใช้ Gemini อ่าน chunk แล้วสกัดเป็น structured JSON"""
