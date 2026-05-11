@@ -30,12 +30,20 @@ def save_token_usage(usage: dict):
 
 def track_tokens(response, function_name: str):
     """อ่าน usage_metadata จาก response แล้ว save"""
-    try:
-        meta = response.usage_metadata
-        in_tok = meta.prompt_token_count or 0
-        out_tok = meta.candidates_token_count or 0
-    except Exception:
+    meta = getattr(response, "usage_metadata", None)
+    if meta is None:
         return
+    # google-genai SDK ใช้ field ชื่อ prompt_token_count / candidates_token_count
+    in_tok = getattr(meta, "prompt_token_count", 0) or 0
+    out_tok = getattr(meta, "candidates_token_count", 0) or 0
+    # fallback: ใช้ total_token_count ถ้า candidates_token_count = 0
+    if out_tok == 0:
+        total = getattr(meta, "total_token_count", 0) or 0
+        if total > in_tok:
+            out_tok = total - in_tok
+    if in_tok == 0 and out_tok == 0:
+        return
+
     usage = load_token_usage()
     usage["total_input"] += in_tok
     usage["total_output"] += out_tok
@@ -317,40 +325,6 @@ def build_bom_prompt(kb, part_index: dict, queries: list[str] = None, collection
 
 st.set_page_config(page_title="BOM + OMRON Catalog", layout="wide")
 st.title("BOM Generator + OMRON Catalog")
-
-# ── Sidebar: Token Usage ─────────────────────────────────────────────────────
-with st.sidebar:
-    st.header("📊 Token Usage")
-    usage = load_token_usage()
-    sess = st.session_state.get("session_tokens", {"input": 0, "output": 0, "calls": 0})
-
-    st.subheader("Session นี้")
-    c1, c2 = st.columns(2)
-    c1.metric("Input", f"{sess['input']:,}")
-    c2.metric("Output", f"{sess['output']:,}")
-    st.caption(f"จำนวน call: {sess['calls']}")
-
-    st.subheader("รวมทั้งหมด")
-    c3, c4 = st.columns(2)
-    c3.metric("Input", f"{usage['total_input']:,}")
-    c4.metric("Output", f"{usage['total_output']:,}")
-    total_all = usage['total_input'] + usage['total_output']
-    st.caption(f"รวม: {total_all:,} tokens · {usage['total_calls']} calls")
-
-    # โควต้า Gemini Free 250k tokens/min, 250 requests/วัน (Flash)
-    if usage["by_function"]:
-        with st.expander("แยกตามฟังก์ชัน"):
-            for fn, v in sorted(usage["by_function"].items(), key=lambda x: -(x[1]["input"]+x[1]["output"])):
-                tot = v["input"] + v["output"]
-                st.write(f"**{fn}**: {tot:,} ({v['calls']} calls)")
-
-    if st.button("🔄 รีเซ็ตยอดทั้งหมด"):
-        save_token_usage({"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}})
-        st.session_state.session_tokens = {"input": 0, "output": 0, "calls": 0}
-        st.rerun()
-
-    st.markdown("---")
-    st.caption("💰 Gemini 2.5 Flash ฟรี 250 calls/วัน")
 
 kb = load_knowledge()
 collection = get_chroma_collection()
@@ -762,3 +736,36 @@ with tab_teach:
 
         if kb["examples"]:
             st.info(f"มีตัวอย่างทั้งหมด {len(kb['examples'])} รายการ")
+
+# ── Sidebar: Token Usage (render LAST so values reflect ทุก LLM call ในรอบนี้) ──
+with st.sidebar:
+    st.header("📊 Token Usage")
+    usage = load_token_usage()
+    sess = st.session_state.get("session_tokens", {"input": 0, "output": 0, "calls": 0})
+
+    st.subheader("Session นี้")
+    c1, c2 = st.columns(2)
+    c1.metric("Input", f"{sess['input']:,}")
+    c2.metric("Output", f"{sess['output']:,}")
+    st.caption(f"จำนวน call: {sess['calls']}")
+
+    st.subheader("รวมทั้งหมด")
+    c3, c4 = st.columns(2)
+    c3.metric("Input", f"{usage['total_input']:,}")
+    c4.metric("Output", f"{usage['total_output']:,}")
+    total_all = usage['total_input'] + usage['total_output']
+    st.caption(f"รวม: {total_all:,} tokens · {usage['total_calls']} calls")
+
+    if usage["by_function"]:
+        with st.expander("แยกตามฟังก์ชัน"):
+            for fn, v in sorted(usage["by_function"].items(), key=lambda x: -(x[1]["input"]+x[1]["output"])):
+                tot = v["input"] + v["output"]
+                st.write(f"**{fn}**: {tot:,} ({v['calls']} calls)")
+
+    if st.button("🔄 รีเซ็ตยอดทั้งหมด"):
+        save_token_usage({"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}})
+        st.session_state.session_tokens = {"input": 0, "output": 0, "calls": 0}
+        st.rerun()
+
+    st.markdown("---")
+    st.caption("💰 Gemini 2.5 Flash ฟรี 250 calls/วัน")
