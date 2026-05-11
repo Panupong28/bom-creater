@@ -9,12 +9,41 @@ import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from google import genai
 from google.genai import types as genai_types
-from datetime import date
+from datetime import date, datetime
 
 KNOWLEDGE_FILE = "knowledge_base.json"
 PART_INDEX_FILE = "part_index.json"
 TOKEN_USAGE_FILE = "token_usage.json"
+APP_LOG_FILE = "app.log"
 CHROMA_DIR = "chroma_db"
+
+# ── Application Log ──────────────────────────────────────────────────────────
+def app_log(event: str, **fields):
+    """เขียน log แบบ structured ลงไฟล์ app.log สำหรับวิเคราะห์ย้อนหลัง
+
+    Format:
+    [2026-05-11 10:20:35] EVENT_NAME
+      key1: value1
+      key2: |
+        multi-line
+        value
+      ---
+    """
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [f"[{ts}] {event}"]
+        for k, v in fields.items():
+            s = str(v) if v is not None else ""
+            if "\n" in s or len(s) > 120:
+                indented = "\n    ".join(s.split("\n"))
+                lines.append(f"  {k}: |\n    {indented}")
+            else:
+                lines.append(f"  {k}: {s}")
+        lines.append("  ---")
+        with open(APP_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        pass  # ไม่ให้ logging ทำแอป crash
 OMRON_PN = re.compile(r'\b([A-Z]{1,4}\d*[A-Z]*-[A-Z0-9\-]{2,15})\b')
 
 # ── Token tracking ───────────────────────────────────────────────────────────
@@ -225,15 +254,30 @@ def search_catalog(collection, query: str, n: int = 5) -> list[str]:
 
 def ask_llm(system_prompt: str, user_input: str, fn_name: str = "ask_llm") -> str:
     client = get_gemini_client()
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=user_input,
-        config=genai_types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.1,
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_input,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.1,
+            ),
+        )
+    except Exception as e:
+        app_log("LLM_ERROR", function=fn_name, model=GEMINI_MODEL,
+                user_input=user_input[:500], error=str(e))
+        raise
     track_tokens(response, fn_name)
+    meta = getattr(response, "usage_metadata", None)
+    in_tok = getattr(meta, "prompt_token_count", 0) if meta else 0
+    out_tok = getattr(meta, "candidates_token_count", 0) if meta else 0
+    app_log("LLM_CALL",
+            function=fn_name,
+            model=GEMINI_MODEL,
+            tokens=f"in={in_tok} out={out_tok}",
+            system_prompt=system_prompt,
+            user_input=user_input,
+            response=response.text)
     return response.text
 
 def get_component_queries(user_input: str) -> list[str]:
@@ -376,7 +420,15 @@ with tab_bom:
                 with st.spinner("วิเคราะห์ component..."):
                     queries = get_component_queries(user_input)
             with st.spinner("กำลังประมวลผล..."):
-                result = ask_llm(build_bom_prompt(kb, part_index, queries, collection), user_input)
+                result = ask_llm(build_bom_prompt(kb, part_index, queries, collection), user_input, fn_name="bom_generation")
+            app_log("BOM_GENERATION",
+                    user_input=user_input,
+                    rules_count=len(kb.get("rules", [])),
+                    examples_count=len(kb.get("examples", [])),
+                    parts_in_catalog=len(part_index),
+                    use_catalog=use_catalog,
+                    component_queries=queries,
+                    bom_output=result)
             st.markdown("---")
             st.subheader("BOM ที่ได้:")
             st.markdown(result)
@@ -509,6 +561,13 @@ with tab_catalog:
 
                 # ตรวจสอบว่าบันทึกจริง
                 check = load_part_index()
+                source_file = json_file.name if json_file else "paste"
+                app_log("JSON_IMPORT",
+                        source=source_file,
+                        mode=merge_mode,
+                        imported_count=len(new_data),
+                        total_count=len(check),
+                        sample_part_nos=list(new_data.keys())[:10])
                 st.success(f"✅ บันทึกสำเร็จ — ฐานข้อมูลมี {len(check)} Part No. (เพิ่ม/อัปเดต {len(new_data)} รายการ)")
                 st.info(f"📁 บันทึกที่: {os.path.abspath(PART_INDEX_FILE)}")
 

@@ -6,6 +6,8 @@ chroma_db/
 part_index.json
 knowledge_base.json
 token_usage.json
+app.log
+app.log.*
 
 # python
 __pycache__/
