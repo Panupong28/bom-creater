@@ -279,17 +279,19 @@ def build_bom_prompt(kb, part_index: dict, queries: list[str] = None, collection
             for cat, items in sorted(by_cat.items()):
                 lines = [f"### {cat}"]
                 for pn, info in sorted(items):
+                    brand = info.get("brand", "")
                     desc = info.get("description", "")
                     specs = info.get("key_specs", "")
                     use = info.get("use_when", "")
-                    lines.append(f"- **{pn}** | {desc} | spec: {specs} | ใช้เมื่อ: {use}")
+                    brand_prefix = f"[{brand}] " if brand else ""
+                    lines.append(f"- **{pn}** | {brand_prefix}{desc} | spec: {specs} | ใช้เมื่อ: {use}")
                 sections.append("\n".join(lines))
             parts_list = "\n\n".join(sections)
         else:
             parts_list = ", ".join(sorted(part_index.keys()))
 
         catalog_section = f"""
-รายการ Part No. จาก Catalog OMRON (เลือกจากรายการนี้เท่านั้น):
+รายการ Part No. จาก Catalog (เลือกจากรายการนี้เท่านั้น):
 {parts_list}
 
 กฎเข้มงวด:
@@ -405,24 +407,40 @@ with tab_catalog:
 2. **Upload PDF catalog** เข้าแชท
 3. Copy prompt ด้านล่างไป paste แล้วส่ง:
 """)
-        prompt_template = """อ่าน PDF นี้แล้วสกัด Part No. ของ OMRON ทั้งหมดออกมา
-สำหรับแต่ละ Part No. ให้บอก:
-- category: หมวด เช่น "CPU Unit", "Power Supply", "Digital Input", "Digital Output", "Analog I/O", "Communication", "Cable", "Terminal Block", "Connector"
-- description: คำอธิบายสั้นๆ
-- key_specs: spec สำคัญ (เช่น "64 points, 24VDC, FCN connector")
-- use_when: เมื่อไหร่ควรใช้ (1 ประโยคสั้น)
+        prompt_template = """อ่าน PDF catalog ที่แนบมาทั้งเล่ม สกัด Part Number/Model ทุกตัว
+(ใช้กับ catalog ทุกยี่ห้อ ทุกประเภทอุปกรณ์)
 
-ตอบเป็น JSON เท่านั้น ไม่มีคำอธิบาย format นี้:
+กฎเข้มงวด:
+1. สกัด Part No. ทุกตัว ห้ามตกหล่นแม้แต่ตัวเดียว
+2. รวม option, accessory, cable, connector ด้วย
+3. บอกจำนวนรวมที่พบก่อนเริ่มลิสต์
+4. ใช้ Part No. ที่ปรากฏในเอกสารจริง ห้ามแต่งเอง
+
+สำหรับแต่ละ Part No. ระบุ 6 fields:
+- brand: ยี่ห้อ (เช่น OMRON, Mitsubishi, Siemens, Schneider, ABB)
+- category: หมวด เช่น "CPU Unit", "Power Supply", "Digital Input", "Digital Output",
+  "Analog I/O", "Communication", "VFD / Inverter", "Servo Drive", "HMI Touchscreen",
+  "Proximity Sensor", "Safety Relay", "Cable", "Terminal Block", "Connector",
+  "MCB", "Contactor", "Solenoid Valve", "Push Button" ฯลฯ
+- description: คำอธิบายสั้น 1 ประโยค (ภาษาไทยหรืออังกฤษ)
+- key_specs: spec สำคัญในบรรทัดเดียว (เช่น "64 points, 24VDC, FCN connector")
+- use_when: เมื่อไหร่ควรเลือกใช้ (1 ประโยคสั้นภาษาไทย)
+- source: ชื่อไฟล์ PDF
+
+ตอบเป็น JSON เท่านั้น ไม่ต้องมีคำอธิบาย ไม่ต้องห่อ markdown:
 {
   "PART-NO-1": {
+    "brand": "...",
     "category": "...",
     "description": "...",
     "key_specs": "...",
     "use_when": "...",
-    "source": "ชื่อไฟล์ PDF"
+    "source": "ชื่อไฟล์.pdf"
   },
   "PART-NO-2": {...}
-}"""
+}
+
+ดูคู่มือเพิ่มเติมที่ PROMPT_TEMPLATES.md (รวม prompt สำหรับ PDF ใหญ่ และต่อยอด)"""
         st.code(prompt_template, language="text")
 
         st.markdown("4. Copy JSON ที่ได้ → save เป็นไฟล์ `.json` → upload ที่นี่:")
