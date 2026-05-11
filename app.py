@@ -587,11 +587,14 @@ with tab_catalog:
                 st.rerun()
 
     with col_query:
-        st.subheader("ถามเกี่ยวกับ OMRON")
-        st.caption("ถามการเลือกรุ่น, spec, การใช้งาน จาก catalog ที่อัปโหลด")
+        st.subheader("ถามเกี่ยวกับอุปกรณ์")
+        st.caption("ถามการเลือกรุ่น, spec, การใช้งาน จาก catalog ที่ import")
 
-        if collection.count() == 0:
-            st.warning("ยังไม่มีข้อมูล กรุณาอัปโหลด Catalog ก่อน")
+        q_part_index = load_part_index()
+        has_any_data = collection.count() > 0 or bool(q_part_index)
+
+        if not has_any_data:
+            st.warning("ยังไม่มีข้อมูล กรุณา Import JSON หรืออัปโหลด PDF ก่อน")
         else:
             question = st.text_area(
                 "คำถาม",
@@ -600,11 +603,29 @@ with tab_catalog:
             )
             if st.button("ถาม", type="primary", use_container_width=True):
                 if question.strip():
-                    with st.spinner("ค้นหาใน Catalog..."):
-                        chunks = search_catalog(collection, question, n=6)
-                        context = "\n\n---\n\n".join(chunks)
-                    system = f"""คุณเป็นผู้เชี่ยวชาญ OMRON PLC ตอบคำถามจากข้อมูล catalog ต่อไปนี้เท่านั้น
-อ้างอิงรุ่นและ spec ให้ชัดเจน ถ้าไม่มีข้อมูลใน catalog ให้บอกตรงๆ
+                    # รวม context จากทั้ง 2 source
+                    context_parts = []
+                    if collection.count() > 0:
+                        with st.spinner("ค้นหาใน Catalog (ChromaDB)..."):
+                            chunks = search_catalog(collection, question, n=6)
+                            if chunks:
+                                context_parts.append("=== จาก PDF chunks ===\n" + "\n\n---\n\n".join(chunks))
+                    if q_part_index:
+                        # สร้าง list Part No. แบบมี description+spec ให้ LLM เห็น
+                        struct_lines = []
+                        for pn, info in q_part_index.items():
+                            brand = info.get("brand", "")
+                            cat = info.get("category", "")
+                            desc = info.get("description", "")
+                            specs = info.get("key_specs", "")
+                            use = info.get("use_when", "")
+                            bp = f"[{brand}] " if brand else ""
+                            struct_lines.append(f"- {pn} | {bp}{cat} | {desc} | spec: {specs} | ใช้เมื่อ: {use}")
+                        context_parts.append("=== Part No. แบบ structured ===\n" + "\n".join(struct_lines))
+
+                    context = "\n\n".join(context_parts)
+                    system = f"""คุณเป็นผู้เชี่ยวชาญด้านอุปกรณ์อุตสาหกรรม ตอบคำถามจากข้อมูล catalog ต่อไปนี้เท่านั้น
+อ้างอิงรุ่นและ spec ให้ชัดเจน ถ้าไม่มีข้อมูลใน catalog ให้บอกตรงๆ ห้ามแต่ง
 
 ข้อมูลจาก Catalog:
 {context}"""
