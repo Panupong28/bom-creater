@@ -9,6 +9,7 @@ import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from google import genai
 from google.genai import types as genai_types
+from datetime import date
 
 KNOWLEDGE_FILE = "knowledge_base.json"
 PART_INDEX_FILE = "part_index.json"
@@ -21,8 +22,11 @@ OMRON_PN = re.compile(r'\b([A-Z]{1,4}\d*[A-Z]*-[A-Z0-9\-]{2,15})\b')
 def load_token_usage() -> dict:
     if os.path.exists(TOKEN_USAGE_FILE):
         with open(TOKEN_USAGE_FILE, "r") as f:
-            return json.load(f)
-    return {"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}}
+            data = json.load(f)
+            data.setdefault("daily", {})
+            data.setdefault("by_model", {})
+            return data
+    return {"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}, "daily": {}, "by_model": {}}
 
 def save_token_usage(usage: dict):
     with open(TOKEN_USAGE_FILE, "w") as f:
@@ -52,6 +56,18 @@ def track_tokens(response, function_name: str):
     fn["input"] += in_tok
     fn["output"] += out_tok
     fn["calls"] += 1
+    # daily counter (รีเซ็ตเมื่อข้ามวัน)
+    today = date.today().isoformat()
+    day = usage["daily"].setdefault(today, {})
+    model_day = day.setdefault(GEMINI_MODEL, {"input": 0, "output": 0, "calls": 0})
+    model_day["input"] += in_tok
+    model_day["output"] += out_tok
+    model_day["calls"] += 1
+    # by_model (รวมทั้งหมด)
+    bm = usage["by_model"].setdefault(GEMINI_MODEL, {"input": 0, "output": 0, "calls": 0})
+    bm["input"] += in_tok
+    bm["output"] += out_tok
+    bm["calls"] += 1
     save_token_usage(usage)
     # session counter
     if "session_tokens" not in st.session_state:
@@ -107,6 +123,13 @@ def get_gemini_client():
     return genai.Client(api_key=api_key)
 
 GEMINI_MODEL = "gemini-2.5-flash-lite"  # Free 1000 RPD vs Flash 20 RPD
+MODEL_DAILY_LIMIT = {
+    "gemini-2.5-flash": 20,
+    "gemini-2.5-flash-lite": 1000,
+    "gemini-2.0-flash": 200,
+    "gemini-2.0-flash-lite": 200,
+    "gemini-1.5-flash": 1500,
+}
 
 def llm_extract_structured(chunk: str) -> dict:
     """ใช้ Gemini อ่าน chunk แล้วสกัดเป็น structured JSON"""
@@ -743,6 +766,19 @@ with st.sidebar:
     usage = load_token_usage()
     sess = st.session_state.get("session_tokens", {"input": 0, "output": 0, "calls": 0})
 
+    # Model & daily quota
+    today = date.today().isoformat()
+    daily_used = usage.get("daily", {}).get(today, {}).get(GEMINI_MODEL, {}).get("calls", 0)
+    daily_limit = MODEL_DAILY_LIMIT.get(GEMINI_MODEL, 1000)
+    remaining = max(0, daily_limit - daily_used)
+
+    st.markdown(f"**Model:** `{GEMINI_MODEL}`")
+    pct = min(1.0, daily_used / daily_limit) if daily_limit else 0
+    st.progress(pct)
+    c_used, c_left = st.columns(2)
+    c_used.metric("ใช้ไปวันนี้", f"{daily_used} / {daily_limit}")
+    c_left.metric("เหลือ", f"{remaining}")
+
     st.subheader("Session นี้")
     c1, c2 = st.columns(2)
     c1.metric("Input", f"{sess['input']:,}")
@@ -756,6 +792,11 @@ with st.sidebar:
     total_all = usage['total_input'] + usage['total_output']
     st.caption(f"รวม: {total_all:,} tokens · {usage['total_calls']} calls")
 
+    if usage.get("by_model"):
+        with st.expander("แยกตาม Model (ตลอดอายุการใช้งาน)"):
+            for m, v in sorted(usage["by_model"].items(), key=lambda x: -x[1]["calls"]):
+                st.write(f"**{m}**: {v['calls']} calls · {v['input']+v['output']:,} tokens")
+
     if usage["by_function"]:
         with st.expander("แยกตามฟังก์ชัน"):
             for fn, v in sorted(usage["by_function"].items(), key=lambda x: -(x[1]["input"]+x[1]["output"])):
@@ -763,9 +804,9 @@ with st.sidebar:
                 st.write(f"**{fn}**: {tot:,} ({v['calls']} calls)")
 
     if st.button("🔄 รีเซ็ตยอดทั้งหมด"):
-        save_token_usage({"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}})
+        save_token_usage({"total_input": 0, "total_output": 0, "total_calls": 0, "by_function": {}, "daily": {}, "by_model": {}})
         st.session_state.session_tokens = {"input": 0, "output": 0, "calls": 0}
         st.rerun()
 
     st.markdown("---")
-    st.caption("💰 Gemini 2.5 Flash ฟรี 250 calls/วัน")
+    st.caption(f"💰 Free tier: {daily_limit:,} calls/วัน")
